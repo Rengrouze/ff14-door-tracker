@@ -1,0 +1,627 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Traqueur de Cartes au Trésor FF14</title>
+  
+  <!-- Styles Tailwind CSS via CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  
+  <!-- React et React DOM via CDN -->
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  
+  <!-- Babel pour la transpilation JSX -->
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  
+  <style>
+    /* Styles supplémentaires au besoin */
+    body {
+      background-color: #f5f5f5;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    }
+  </style>
+</head>
+<body>
+  <div id="root" class="container mx-auto py-8 px-4"></div>
+
+  <script type="text/babel">
+    // Hooks React
+    const { useState, useEffect } = React;
+    
+    const FF14TreasureTracker = () => {
+      // Nombre fixe de salles pour les cartes au trésor
+      const MAX_ROOMS = 5;
+      // Nombre de salles avec choix de portes (la dernière est juste le coffre)
+      const ROOMS_WITH_DOORS = 4;
+      
+      // État pour stocker les runs complets
+      const [treasureRuns, setTreasureRuns] = useState(() => {
+        const savedRuns = localStorage.getItem('ff14TreasureRuns');
+        return savedRuns ? JSON.parse(savedRuns) : [];
+      });
+      
+      // État pour le run actuel
+      const [currentRun, setCurrentRun] = useState(null);
+      
+      // État pour les statistiques
+      const [stats, setStats] = useState({});
+
+      // État pour choisir le mode de recommandation
+      const [recommendMode, setRecommendMode] = useState('inversion');
+      
+      // Sauvegarder les runs dans le localStorage
+      useEffect(() => {
+        localStorage.setItem('ff14TreasureRuns', JSON.stringify(treasureRuns));
+        calculateStats();
+      }, [treasureRuns]);
+      
+      // Calculer les statistiques
+      const calculateStats = () => {
+        const newStats = {};
+        
+        // Initialiser les stats pour chaque salle
+        for (let i = 1; i <= MAX_ROOMS; i++) {
+          newStats[i] = { 
+            left: 0, 
+            right: 0, 
+            total: 0,
+            leftAttempts: 0,  // Nombre total de tentatives côté gauche (succès + échecs)
+            rightAttempts: 0, // Nombre total de tentatives côté droit (succès + échecs)
+            recentLeftSuccess: 0,
+            recentRightSuccess: 0,
+            recentTotal: 0
+          };
+        }
+        
+        // Récupérer les 10 derniers runs pour les statistiques récentes
+        const recentRuns = treasureRuns.slice(-10);
+        
+        // Calculer les statistiques globales
+        treasureRuns.forEach(run => {
+          run.rooms.forEach(room => {
+            const doorLower = room.door.toLowerCase();
+            
+            // Incrémenter le compteur de tentatives pour cette porte
+            if (doorLower === 'gauche') {
+              newStats[room.roomNumber].leftAttempts += 1;
+              // Si le résultat est un succès, incrémenter aussi le compteur de succès
+              if (room.result) {
+                newStats[room.roomNumber].left += 1;
+                newStats[room.roomNumber].total += 1;
+              }
+            } else if (doorLower === 'droite') {
+              newStats[room.roomNumber].rightAttempts += 1;
+              // Si le résultat est un succès, incrémenter aussi le compteur de succès
+              if (room.result) {
+                newStats[room.roomNumber].right += 1;
+                newStats[room.roomNumber].total += 1;
+              }
+            }
+          });
+        });
+        
+        // Calculer les statistiques récentes
+        recentRuns.forEach(run => {
+          run.rooms.forEach(room => {
+            const doorLower = room.door.toLowerCase();
+            if (room.result) {
+              if (doorLower === 'gauche') {
+                newStats[room.roomNumber].recentLeftSuccess += 1;
+              } else if (doorLower === 'droite') {
+                newStats[room.roomNumber].recentRightSuccess += 1;
+              }
+              newStats[room.roomNumber].recentTotal += 1;
+            }
+          });
+        });
+        
+        setStats(newStats);
+      };
+      
+      // Démarrer un nouveau run
+      const startNewRun = () => {
+        if (currentRun && currentRun.active) {
+          if (!confirm("Vous avez déjà un run en cours. Voulez-vous l'abandonner et en commencer un nouveau?")) {
+            return;
+          }
+        }
+        
+        const newRun = {
+          id: Date.now(),
+          startTime: new Date().toISOString(),
+          active: true,
+          completed: false,
+          rooms: [],
+          maxRoom: 0
+        };
+        
+        setCurrentRun(newRun);
+      };
+      
+      // Ajouter un résultat de salle
+      const addRoomResult = (roomNumber, door, success) => {
+        if (!currentRun || !currentRun.active) {
+          alert("Veuillez d'abord démarrer un nouveau run!");
+          return;
+        }
+        
+        // Vérifier si la salle est valide
+        if (roomNumber > currentRun.maxRoom + 1) {
+          alert(`Vous ne pouvez pas ajouter la salle ${roomNumber} car vous n'avez pas encore terminé la salle ${currentRun.maxRoom + 1}`);
+          return;
+        }
+        
+        const roomResult = {
+          roomNumber,
+          door,
+          result: success,
+          timestamp: new Date().toISOString()
+        };
+        
+        const updatedRun = { ...currentRun };
+        updatedRun.rooms.push(roomResult);
+        
+        if (success) {
+          updatedRun.maxRoom = Math.max(updatedRun.maxRoom, roomNumber);
+          
+          // Si on vient de terminer la 4ème salle avec succès, automatiquement arriver à la salle du trésor
+          if (roomNumber === ROOMS_WITH_DOORS) {
+            // On atteint automatiquement la salle du trésor
+            updatedRun.maxRoom = MAX_ROOMS;
+            updatedRun.active = false;
+            updatedRun.completed = true;
+            updatedRun.endTime = new Date().toISOString();
+          }
+        } else {
+          // Si échec, le run est terminé
+          updatedRun.active = false;
+          updatedRun.completed = false;
+          updatedRun.endTime = new Date().toISOString();
+        }
+        
+        setCurrentRun(updatedRun);
+        
+        // Si le run est terminé, l'ajouter à l'historique
+        if (!updatedRun.active) {
+          setTreasureRuns([...treasureRuns, updatedRun]);
+          setTimeout(() => {
+            alert(updatedRun.completed 
+              ? "Félicitations! Vous avez atteint le trésor!" 
+              : "Run terminé. Vous devez recommencer depuis la première salle."
+            );
+          }, 100);
+        }
+      };
+      
+      // Terminer le run actuel manuellement
+      const endCurrentRun = (completed = false) => {
+        if (!currentRun || !currentRun.active) return;
+        
+        const updatedRun = { ...currentRun };
+        updatedRun.active = false;
+        updatedRun.completed = completed;
+        updatedRun.endTime = new Date().toISOString();
+        
+        setCurrentRun(updatedRun);
+        setTreasureRuns([...treasureRuns, updatedRun]);
+      };
+      
+      // Effacer l'historique
+      const clearHistory = () => {
+        if (confirm("Êtes-vous sûr de vouloir supprimer tout l'historique?")) {
+          setTreasureRuns([]);
+          localStorage.removeItem('ff14TreasureRuns');
+        }
+      };
+
+      // Obtenir une recommandation basée sur la logique d'inversion
+      const getInversionRecommendation = (roomStats) => {
+        if (!roomStats || roomStats.total === 0) return null;
+        
+        // Pour l'inversion, on regarde les stats récentes pour plus de réactivité
+        const leftPercent = roomStats.recentTotal > 0 
+          ? (roomStats.recentLeftSuccess / roomStats.recentTotal) * 100
+          : (roomStats.left / roomStats.total) * 100;
+          
+        const rightPercent = roomStats.recentTotal > 0
+          ? (roomStats.recentRightSuccess / roomStats.recentTotal) * 100
+          : (roomStats.right / roomStats.total) * 100;
+        
+        // Si les deux portes ont exactement les mêmes statistiques
+        if (leftPercent === rightPercent) {
+          // Si aucune porte n'a été essayée ou les deux ont 0%
+          if (leftPercent === 0 && rightPercent === 0) {
+            return "Aléatoire (aucune donnée significative)";
+          }
+          return "Égalité statistique";
+        }
+        
+        // Logique d'inversion: recommander la porte qui a eu le MOINS de succès récemment
+        // C'est le principe que vous décrivez de "plus on rate, plus on augmente nos chances"
+        if (leftPercent < rightPercent) {
+          return `Gauche (principe d'inversion)`;
+        } else {
+          return `Droite (principe d'inversion)`;
+        }
+      };
+      
+      // Obtenir une recommandation basée sur les statistiques traditionnelles
+      const getTraditionalRecommendation = (roomStats) => {
+        if (!roomStats || roomStats.total === 0) return null;
+        
+        const leftPercent = (roomStats.left / roomStats.total) * 100;
+        const rightPercent = (roomStats.right / roomStats.total) * 100;
+        
+        // Si les deux portes ont exactement les mêmes statistiques
+        if (leftPercent === rightPercent) {
+          // Si aucune porte n'a été essayée ou les deux ont 0%
+          if (leftPercent === 0 && rightPercent === 0) {
+            return "Aléatoire (aucune donnée significative)";
+          }
+          return "Égalité statistique";
+        }
+        
+        // Logique traditionnelle: recommander la porte avec le plus de succès historiques
+        if (leftPercent > rightPercent) {
+          return `Gauche (stats historiques)`;
+        } else {
+          return `Droite (stats historiques)`;
+        }
+      };
+      
+      // Obtenir les statistiques pour une salle avec recommandation
+      const getRoomStatsDisplay = (roomNumber) => {
+        const roomStats = stats[roomNumber] || { 
+          left: 0, 
+          right: 0, 
+          total: 0, 
+          leftAttempts: 0, 
+          rightAttempts: 0 
+        };
+        
+        // Pas de données du tout
+        if (roomStats.leftAttempts === 0 && roomStats.rightAttempts === 0) {
+          return (
+            <div className="text-center text-gray-500 py-2">
+              Aucune donnée
+            </div>
+          );
+        }
+        
+        // Calculer les pourcentages de succès si des tentatives ont été faites
+        const leftPercent = roomStats.leftAttempts > 0 
+          ? (roomStats.left / roomStats.leftAttempts) * 100 
+          : 0;
+        const rightPercent = roomStats.rightAttempts > 0 
+          ? (roomStats.right / roomStats.rightAttempts) * 100 
+          : 0;
+        
+        // Obtenir les recommandations
+        const inversionReco = getInversionRecommendation(roomStats);
+        const traditionalReco = getTraditionalRecommendation(roomStats);
+        
+        // Déterminer la recommandation à afficher en fonction du mode
+        const recommendation = recommendMode === 'inversion' ? inversionReco : traditionalReco;
+        
+        // Déterminer visuellement quelle porte est recommandée
+        const isLeftRecommended = recommendation && recommendation.includes('Gauche');
+        const isRightRecommended = recommendation && recommendation.includes('Droite');
+        
+        return (
+          <div>
+            <div className="grid grid-cols-2 gap-2 mt-2">
+              <div 
+                className={`p-2 rounded text-center ${
+                  isLeftRecommended ? 'bg-green-100 border border-green-300 font-bold' : 'bg-gray-100'
+                }`}
+              >
+                <div className="text-lg font-bold">{leftPercent.toFixed(1)}%</div>
+                <div className="text-sm">
+                  Gauche ({roomStats.left}/{roomStats.leftAttempts || 0})
+                  {roomStats.leftAttempts === 0 && " - Jamais essayé"}
+                </div>
+              </div>
+              <div 
+                className={`p-2 rounded text-center ${
+                  isRightRecommended ? 'bg-green-100 border border-green-300 font-bold' : 'bg-gray-100'
+                }`}
+              >
+                <div className="text-lg font-bold">{rightPercent.toFixed(1)}%</div>
+                <div className="text-sm">
+                  Droite ({roomStats.right}/{roomStats.rightAttempts || 0})
+                  {roomStats.rightAttempts === 0 && " - Jamais essayé"}
+                </div>
+              </div>
+            </div>
+            <div className="col-span-2 mt-3 text-center p-2 bg-blue-50 rounded">
+              <span className="font-medium">Recommandation: </span> 
+              <span className="font-bold">{recommendation || 'Aucune donnée'}</span>
+            </div>
+          </div>
+        );
+      };
+      
+      // Générer des options de salle pour le run actuel
+      const nextRoomOptions = () => {
+        if (!currentRun || !currentRun.active) return null;
+        
+        const nextRoom = currentRun.maxRoom + 1;
+        if (nextRoom > ROOMS_WITH_DOORS) return null; // On ne demande pas de choix pour la salle 5
+        
+        return (
+          <div className="mt-4 p-4 bg-blue-50 rounded shadow">
+            <h3 className="text-lg font-semibold mb-2">Salle actuelle: {nextRoom}</h3>
+            
+            {/* Mode de recommandation */}
+            <div className="mb-4 p-3 bg-white rounded">
+              <h4 className="font-medium mb-2">Mode de recommandation:</h4>
+              <div className="flex gap-2">
+                <button
+                  className={`flex-1 py-2 px-3 rounded ${
+                    recommendMode === 'inversion' 
+                      ? 'bg-blue-500 text-white font-medium' 
+                      : 'bg-gray-200'
+                  }`}
+                  onClick={() => setRecommendMode('inversion')}
+                >
+                  Principe d'inversion
+                </button>
+                <button
+                  className={`flex-1 py-2 px-3 rounded ${
+                    recommendMode === 'traditional' 
+                      ? 'bg-blue-500 text-white font-medium' 
+                      : 'bg-gray-200'
+                  }`}
+                  onClick={() => setRecommendMode('traditional')}
+                >
+                  Statistiques brutes
+                </button>
+              </div>
+              <div className="mt-2 text-xs text-gray-600">
+                {recommendMode === 'inversion' 
+                  ? "Principe d'inversion: la porte qui a eu le moins de succès récemment est plus susceptible de réussir maintenant." 
+                  : "Statistiques brutes: la porte avec le plus de succès historiques est plus susceptible de réussir."}
+              </div>
+            </div>
+            
+            {/* Statistiques pour cette salle */}
+            <div className="p-3 bg-white rounded mb-3">
+              <h4 className="font-medium mb-1">Statistiques pour la salle {nextRoom}:</h4>
+              {getRoomStatsDisplay(nextRoom)}
+            </div>
+            
+            <div className="mt-3">
+              <p className="mb-2 font-medium">Quelle porte avez-vous choisie?</p>
+              <div className="grid grid-cols-2 gap-3">
+                <button 
+                  className="py-3 px-4 bg-blue-500 text-white rounded font-medium"
+                  onClick={() => addRoomResult(nextRoom, 'gauche', true)}
+                >
+                  Gauche (Succès)
+                </button>
+                <button 
+                  className="py-3 px-4 bg-blue-500 text-white rounded font-medium"
+                  onClick={() => addRoomResult(nextRoom, 'droite', true)}
+                >
+                  Droite (Succès)
+                </button>
+                <button 
+                  className="py-3 px-4 bg-red-500 text-white rounded font-medium"
+                  onClick={() => addRoomResult(nextRoom, 'gauche', false)}
+                >
+                  Gauche (Échec)
+                </button>
+                <button 
+                  className="py-3 px-4 bg-red-500 text-white rounded font-medium"
+                  onClick={() => addRoomResult(nextRoom, 'droite', false)}
+                >
+                  Droite (Échec)
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      };
+      
+      // Afficher le run actuel
+      const renderCurrentRun = () => {
+        if (!currentRun) return null;
+        
+        return (
+          <div className="mb-6 p-4 bg-white rounded shadow">
+            <h2 className="text-xl font-semibold mb-2">
+              {currentRun.active ? 
+                'Carte au trésor en cours' : 
+                `Carte au trésor terminée (${currentRun.completed ? 'Réussie' : 'Échouée'})`
+              }
+            </h2>
+            
+            <div className="mb-3 text-sm">
+              <div>Démarré: {new Date(currentRun.startTime).toLocaleString()}</div>
+              {currentRun.endTime && (
+                <div>Terminé: {new Date(currentRun.endTime).toLocaleString()}</div>
+              )}
+            </div>
+            
+            <div className="mb-3">
+              <h3 className="font-medium mb-2">Progression:</h3>
+              
+              <div className="grid grid-cols-5 gap-2">
+                {Array.from({ length: MAX_ROOMS }, (_, i) => i + 1).map(room => {
+                  const roomData = currentRun.rooms.find(r => r.roomNumber === room);
+                  const isLastRoom = room === MAX_ROOMS;
+                  
+                  return (
+                    <div 
+                      key={room}
+                      className={`p-2 text-center rounded ${
+                        !roomData 
+                          ? currentRun.maxRoom + 1 === room && currentRun.active
+                            ? 'bg-blue-200 text-blue-800'
+                            : 'bg-gray-200' 
+                          : roomData.result 
+                            ? 'bg-green-200 text-green-800' 
+                            : 'bg-red-200 text-red-800'
+                      } ${isLastRoom ? 'border-2 border-yellow-500' : ''}`}
+                    >
+                      <div className="font-medium">
+                        {isLastRoom ? '💰 Trésor' : `Salle ${room}`}
+                      </div>
+                      {roomData && !isLastRoom && (
+                        <div className="text-xs mt-1">{roomData.door}</div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+            
+            {currentRun.active && (
+              <>
+                {nextRoomOptions()}
+                
+                <button 
+                  className="mt-4 p-2 bg-gray-200 rounded w-full"
+                  onClick={() => endCurrentRun(false)}
+                >
+                  Abandonner le run
+                </button>
+              </>
+            )}
+          </div>
+        );
+      };
+
+      return (
+        <div className="p-4 max-w-xl mx-auto bg-gray-100 rounded-lg shadow">
+          <h1 className="text-2xl font-bold mb-4 text-center">Traqueur de Cartes au Trésor FF14</h1>
+          
+          <div className="mb-6 p-4 bg-white rounded shadow">
+            <div className="p-3 mb-4 bg-yellow-50 border border-yellow-200 rounded text-sm">
+              <p className="font-medium mb-1">Principe d'inversion statistique:</p>
+              <p>Si vous avez 5% de chance de trouver un objet, plus vous essayez sans succès, plus la probabilité de réussir sur les prochains essais augmente. Ce principe est appliqué aux portes des cartes au trésor.</p>
+            </div>
+            
+            <button 
+              className="p-3 bg-green-600 text-white rounded w-full font-medium"
+              onClick={startNewRun}
+            >
+              Démarrer une nouvelle carte au trésor
+            </button>
+          </div>
+          
+          {renderCurrentRun()}
+          
+          <div className="mb-6 p-4 bg-white rounded shadow">
+            <div className="flex justify-between items-center mb-3">
+              <h2 className="text-xl font-semibold">Statistiques des portes</h2>
+              
+              <div className="flex gap-2">
+                <button
+                  className={`py-1 px-2 rounded text-sm ${
+                    recommendMode === 'inversion' 
+                      ? 'bg-blue-500 text-white' 
+                      : 'bg-gray-200'
+                  }`}
+                  onClick={() => setRecommendMode('inversion')}
+                >
+                  Principe d'inversion
+                </button>
+                <button
+                  className={`py-1 px-2 rounded text-sm ${
+                    recommendMode === 'traditional' 
+                      ? 'bg-blue-500 text-white' 
+                      : 'bg-gray-200'
+                  }`}
+                  onClick={() => setRecommendMode('traditional')}
+                >
+                  Statistiques brutes
+                </button>
+              </div>
+            </div>
+            
+            <p className="text-sm text-gray-600 mb-4">
+              {recommendMode === 'inversion' 
+                ? "Mode d'inversion: recommande la porte qui a eu le moins de succès récents, car elle est 'due' pour réussir." 
+                : "Mode traditionnel: recommande la porte avec le meilleur taux de succès historique."}
+            </p>
+            
+            <div className="grid gap-4">
+              {Array.from({ length: ROOMS_WITH_DOORS }, (_, i) => i + 1).map(room => (
+                <div key={room} className="p-3 border rounded">
+                  <h3 className="font-medium text-center text-lg mb-2">Salle {room}</h3>
+                  {getRoomStatsDisplay(room)}
+                </div>
+              ))}
+              
+              <div className="p-3 border border-yellow-500 rounded bg-yellow-50">
+                <h3 className="font-medium text-center text-lg mb-2">💰 Salle du Trésor (5)</h3>
+                <p className="text-center">La dernière salle est le coffre au trésor - pas de choix de porte!</p>
+              </div>
+            </div>
+          </div>
+          
+          <div className="mb-6 p-4 bg-white rounded shadow">
+            <h2 className="text-xl font-semibold mb-2">Historique des runs</h2>
+            
+            {treasureRuns.length > 0 ? (
+              <div className="max-h-60 overflow-y-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="bg-gray-100">
+                      <th className="p-2 text-left">Date</th>
+                      <th className="p-2 text-center">Progression</th>
+                      <th className="p-2 text-center">Résultat</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {treasureRuns.slice().reverse().map(run => (
+                      <tr key={run.id} className="border-t">
+                        <td className="p-2">{new Date(run.startTime).toLocaleString()}</td>
+                        <td className="p-2 text-center">
+                          {run.maxRoom}/{MAX_ROOMS} salles
+                        </td>
+                        <td className={`p-2 text-center ${run.completed ? 'text-green-600' : 'text-red-600'}`}>
+                          {run.completed ? 'Réussi' : 'Échoué'}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <p>Aucun run enregistré</p>
+            )}
+            
+            {treasureRuns.length > 0 && (
+              <button 
+                className="mt-3 p-2 bg-red-100 text-red-700 rounded w-full"
+                onClick={clearHistory}
+              >
+                Effacer l'historique
+              </button>
+            )}
+          </div>
+          
+          <div className="text-sm text-gray-600 mt-4">
+            <p><strong>À propos du principe d'inversion statistique:</strong></p>
+            <ul className="list-disc pl-5 mt-1 space-y-1">
+              <li>Plus une porte a été rarement correcte récemment, plus elle est susceptible d'être la bonne selon ce principe</li>
+              <li>Ce principe fonctionne mieux pour des systèmes qui cherchent à maintenir une certaine balance (plutôt que pure randomisation)</li>
+              <li>Si les portes sont vraiment 100% aléatoires, les deux approches sont théoriquement équivalentes sur le long terme</li>
+              <li>Certains joueurs croient que Square Enix utilise un système qui favorise les alternances plutôt qu'un hasard pur</li>
+            </ul>
+            <p className="mt-2">Vos données sont stockées localement dans votre navigateur.</p>
+          </div>
+        </div>
+      );
+    };
+
+    // Rendu de l'application
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<FF14TreasureTracker />);
+  </script>
+</body>
+</html>
