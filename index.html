@@ -51,6 +51,10 @@
       // État pour choisir le mode de recommandation
       const [recommendMode, setRecommendMode] = useState('inversion');
       
+      // État pour l'édition d'un run existant
+      const [editingRun, setEditingRun] = useState(null);
+      const [editMode, setEditMode] = useState(false);
+      
       // Sauvegarder les runs dans le localStorage
       useEffect(() => {
         localStorage.setItem('ff14TreasureRuns', JSON.stringify(treasureRuns));
@@ -208,12 +212,292 @@
         setTreasureRuns([...treasureRuns, updatedRun]);
       };
       
+      // Commencer à éditer un run existant
+      const startEditRun = (runId) => {
+        const runToEdit = treasureRuns.find(run => run.id === runId);
+        if (runToEdit) {
+          setEditingRun({...runToEdit});
+          setEditMode(true);
+        }
+      };
+      
+      // Annuler l'édition en cours
+      const cancelEditRun = () => {
+        setEditingRun(null);
+        setEditMode(false);
+      };
+      
+      // Mettre à jour un run après édition
+      const updateRun = () => {
+        if (!editingRun) return;
+        
+        // Mise à jour du run dans l'historique
+        const updatedRuns = treasureRuns.map(run => 
+          run.id === editingRun.id ? editingRun : run
+        );
+        
+        setTreasureRuns(updatedRuns);
+        setEditingRun(null);
+        setEditMode(false);
+        
+        alert("Run mis à jour avec succès!");
+      };
+      
+      // Supprimer un résultat de salle pendant l'édition
+      const removeRoomResult = (roomNumber) => {
+        if (!editingRun) return;
+        
+        // Filtrer les résultats pour enlever la salle spécifiée
+        const updatedRooms = editingRun.rooms.filter(room => room.roomNumber !== roomNumber);
+        
+        // Recalculer maxRoom et d'autres métriques
+        let maxRoom = 0;
+        updatedRooms.forEach(room => {
+          if (room.result && room.roomNumber > maxRoom) {
+            maxRoom = room.roomNumber;
+          }
+        });
+        
+        // Déterminer si le run est complété
+        const isCompleted = maxRoom >= ROOMS_WITH_DOORS;
+        
+        setEditingRun({
+          ...editingRun,
+          rooms: updatedRooms,
+          maxRoom: maxRoom,
+          completed: isCompleted && editingRun.completed
+        });
+      };
+      
+      // Modifier un résultat de salle pendant l'édition
+      const editRoomResult = (roomNumber, door, success) => {
+        if (!editingRun) return;
+        
+        // Trouve la salle à modifier
+        const roomIndex = editingRun.rooms.findIndex(room => room.roomNumber === roomNumber);
+        
+        // Si la salle existe, on la modifie
+        if (roomIndex >= 0) {
+          const updatedRooms = [...editingRun.rooms];
+          updatedRooms[roomIndex] = {
+            ...updatedRooms[roomIndex],
+            door: door,
+            result: success
+          };
+          
+          // Recalculer maxRoom et autres métriques
+          let maxRoom = 0;
+          updatedRooms.forEach(room => {
+            if (room.result && room.roomNumber > maxRoom) {
+              maxRoom = room.roomNumber;
+            }
+          });
+          
+          // Déterminer si le run est complété
+          const isCompleted = maxRoom >= ROOMS_WITH_DOORS;
+          
+          setEditingRun({
+            ...editingRun,
+            rooms: updatedRooms,
+            maxRoom: maxRoom,
+            completed: isCompleted
+          });
+        }
+      };
+      
+      // Ajouter un résultat de salle pendant l'édition
+      const addRoomResultDuringEdit = (roomNumber, door, success) => {
+        if (!editingRun) return;
+        
+        // Vérifier que cette salle n'existe pas déjà
+        const existingRoom = editingRun.rooms.find(room => room.roomNumber === roomNumber);
+        if (existingRoom) {
+          // Si la salle existe déjà, on la modifie plutôt
+          return editRoomResult(roomNumber, door, success);
+        }
+        
+        // Nouvelle entrée pour cette salle
+        const newRoomResult = {
+          roomNumber,
+          door,
+          result: success,
+          timestamp: new Date().toISOString()
+        };
+        
+        // Ajouter la nouvelle salle
+        const updatedRooms = [...editingRun.rooms, newRoomResult];
+        
+        // Recalculer maxRoom
+        let maxRoom = 0;
+        updatedRooms.forEach(room => {
+          if (room.result && room.roomNumber > maxRoom) {
+            maxRoom = room.roomNumber;
+          }
+        });
+        
+        // Déterminer si le run est complété
+        const isCompleted = maxRoom >= ROOMS_WITH_DOORS;
+        
+        setEditingRun({
+          ...editingRun,
+          rooms: updatedRooms,
+          maxRoom: maxRoom,
+          completed: isCompleted
+        });
+      };
+      
       // Effacer l'historique
       const clearHistory = () => {
         if (confirm("Êtes-vous sûr de vouloir supprimer tout l'historique?")) {
           setTreasureRuns([]);
           localStorage.removeItem('ff14TreasureRuns');
         }
+      };
+
+      // Afficher l'interface d'édition d'un run
+      const renderEditRun = () => {
+        if (!editingRun) return null;
+        
+        // Trier les salles par numéro
+        const sortedRooms = [...editingRun.rooms].sort((a, b) => a.roomNumber - b.roomNumber);
+        
+        return (
+          <div className="mb-6 p-4 bg-white rounded shadow">
+            <h2 className="text-xl font-semibold mb-2">
+              Modifier un run
+            </h2>
+            
+            <div className="mb-3 text-sm">
+              <div>Date: {new Date(editingRun.startTime).toLocaleString()}</div>
+              <div>Statut: {editingRun.completed ? 'Réussi' : 'Échoué'}</div>
+            </div>
+            
+            <div className="mb-4">
+              <h3 className="font-medium mb-2">Salles enregistrées:</h3>
+              
+              <div className="grid grid-cols-1 gap-3">
+                {sortedRooms.map(room => (
+                  <div 
+                    key={room.roomNumber}
+                    className={`p-3 rounded border ${
+                      room.result ? 'border-green-300 bg-green-50' : 'border-red-300 bg-red-50'
+                    }`}
+                  >
+                    <div className="flex justify-between items-center">
+                      <div>
+                        <span className="font-medium">Salle {room.roomNumber}: </span>
+                        <span>{room.door} ({room.result ? 'Succès' : 'Échec'})</span>
+                      </div>
+                      <div className="flex gap-2">
+                        <button 
+                          className="px-2 py-1 bg-blue-100 text-blue-700 rounded text-sm"
+                          onClick={() => removeRoomResult(room.roomNumber)}
+                        >
+                          Supprimer
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              
+              {sortedRooms.length === 0 && (
+                <div className="text-center text-gray-500 p-4">
+                  Aucune salle enregistrée pour ce run.
+                </div>
+              )}
+            </div>
+            
+            <div className="mb-4 p-3 border rounded">
+              <h3 className="font-medium mb-2">Ajouter/Modifier une salle:</h3>
+              
+              {/* Interface pour ajouter des salles au run */}
+              <div className="grid grid-cols-2 gap-2 mb-3">
+                {Array.from({ length: ROOMS_WITH_DOORS }, (_, i) => i + 1).map(roomNum => (
+                  <button
+                    key={roomNum}
+                    className={`p-2 text-center rounded border ${
+                      sortedRooms.some(r => r.roomNumber === roomNum)
+                        ? 'bg-blue-100 border-blue-300'
+                        : 'bg-gray-100'
+                    }`}
+                    onClick={() => {
+                      // Ouvrir l'interface pour modifier cette salle
+                      document.getElementById(`edit-room-${roomNum}`).classList.toggle('hidden');
+                    }}
+                  >
+                    Salle {roomNum} {sortedRooms.some(r => r.roomNumber === roomNum) ? '(Modif)' : '(Ajout)'}
+                  </button>
+                ))}
+              </div>
+              
+              {/* Interfaces cachées pour chaque salle */}
+              {Array.from({ length: ROOMS_WITH_DOORS }, (_, i) => i + 1).map(roomNum => (
+                <div 
+                  key={`edit-interface-${roomNum}`} 
+                  id={`edit-room-${roomNum}`}
+                  className="p-3 border rounded mb-2 hidden"
+                >
+                  <h4 className="font-medium mb-2">Salle {roomNum}:</h4>
+                  
+                  <div className="grid grid-cols-2 gap-2">
+                    <button 
+                      className="p-2 bg-blue-500 text-white rounded"
+                      onClick={() => {
+                        addRoomResultDuringEdit(roomNum, 'gauche', true);
+                        document.getElementById(`edit-room-${roomNum}`).classList.add('hidden');
+                      }}
+                    >
+                      Gauche (Succès)
+                    </button>
+                    <button 
+                      className="p-2 bg-blue-500 text-white rounded"
+                      onClick={() => {
+                        addRoomResultDuringEdit(roomNum, 'droite', true);
+                        document.getElementById(`edit-room-${roomNum}`).classList.add('hidden');
+                      }}
+                    >
+                      Droite (Succès)
+                    </button>
+                    <button 
+                      className="p-2 bg-red-500 text-white rounded"
+                      onClick={() => {
+                        addRoomResultDuringEdit(roomNum, 'gauche', false);
+                        document.getElementById(`edit-room-${roomNum}`).classList.add('hidden');
+                      }}
+                    >
+                      Gauche (Échec)
+                    </button>
+                    <button 
+                      className="p-2 bg-red-500 text-white rounded"
+                      onClick={() => {
+                        addRoomResultDuringEdit(roomNum, 'droite', false);
+                        document.getElementById(`edit-room-${roomNum}`).classList.add('hidden');
+                      }}
+                    >
+                      Droite (Échec)
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+            
+            <div className="flex gap-3">
+              <button 
+                className="flex-1 p-2 bg-green-600 text-white rounded font-medium"
+                onClick={updateRun}
+              >
+                Enregistrer les modifications
+              </button>
+              <button 
+                className="flex-1 p-2 bg-gray-300 rounded"
+                onClick={cancelEditRun}
+              >
+                Annuler
+              </button>
+            </div>
+          </div>
+        );
       };
 
       // Obtenir une recommandation basée sur la logique d'inversion
@@ -507,12 +791,15 @@
             <button 
               className="p-3 bg-green-600 text-white rounded w-full font-medium"
               onClick={startNewRun}
+              disabled={editMode}
             >
               Démarrer une nouvelle carte au trésor
             </button>
           </div>
           
           {renderCurrentRun()}
+          
+          {editMode && renderEditRun()}
           
           <div className="mb-6 p-4 bg-white rounded shadow">
             <div className="flex justify-between items-center mb-3">
@@ -574,6 +861,7 @@
                       <th className="p-2 text-left">Date</th>
                       <th className="p-2 text-center">Progression</th>
                       <th className="p-2 text-center">Résultat</th>
+                      <th className="p-2 text-center">Action</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -585,6 +873,15 @@
                         </td>
                         <td className={`p-2 text-center ${run.completed ? 'text-green-600' : 'text-red-600'}`}>
                           {run.completed ? 'Réussi' : 'Échoué'}
+                        </td>
+                        <td className="p-2 text-center">
+                          <button 
+                            className="px-2 py-1 bg-blue-100 text-blue-700 rounded text-xs"
+                            onClick={() => startEditRun(run.id)}
+                            disabled={editMode}
+                          >
+                            Modifier
+                          </button>
                         </td>
                       </tr>
                     ))}
@@ -599,6 +896,7 @@
               <button 
                 className="mt-3 p-2 bg-red-100 text-red-700 rounded w-full"
                 onClick={clearHistory}
+                disabled={editMode}
               >
                 Effacer l'historique
               </button>
